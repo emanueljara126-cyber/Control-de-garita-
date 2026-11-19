@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#183b35">
+<title>Control de Garita - prueba escáner V4</title>
+<style>
+:root{--bg:#f3f6f5;--ink:#172522;--muted:#61716c;--green:#1d6b52;--line:#dce5e1;--card:#fff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px system-ui,-apple-system,Segoe UI,sans-serif}
+header{background:#183b35;color:white;padding:20px 16px 16px}header h1{font-size:21px;margin:0 0 4px}header p{margin:0;color:#d6e7e0;font-size:13px}
+main{max-width:760px;margin:auto;padding:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:16px;margin:0 0 13px;box-shadow:0 2px 8px #16352a0a}
+h2{font-size:18px;margin:0 0 12px}.muted{color:var(--muted);font-size:13px}.hidden{display:none!important}
+label{display:block;font-size:13px;font-weight:650;margin:12px 0 5px}
+input,select,textarea{width:100%;font:inherit;padding:12px;border:1px solid #cbd8d2;border-radius:10px;background:white;color:var(--ink)}
+textarea{min-height:90px;resize:vertical}
+button{border:0;border-radius:10px;padding:12px 14px;font:650 15px system-ui;cursor:pointer;background:var(--green);color:white}
+button.secondary{background:#e8efeb;color:#214337}button.danger{background:#a83232}button.small{padding:8px 10px;font-size:13px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tabs{display:flex;gap:8px;overflow:auto;margin-bottom:12px}.tabs button{white-space:nowrap}
+.tabs button.active{background:#183b35}
+.pill{display:inline-block;border-radius:99px;padding:4px 9px;font-size:12px;font-weight:700}
+.pill.clean{background:#dcfce7;color:#166534}.pill.visit{background:#e5e7eb;color:#374151}.pill.real{background:#fee2e2;color:#991b1b}.pill.inside{background:#dbeafe;color:#1e40af}
+.record{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:9px}
+.record strong{display:block}.record .meta{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.5}
+.stat{font-size:26px;font-weight:750}.notice{background:#fff8df;border:1px solid #f0df9c;padding:11px;border-radius:10px;font-size:13px;line-height:1.45}
+.error{color:#a83232;font-size:13px;margin-top:8px}
+.scanner-frame{position:relative;width:100%;max-width:520px;margin:0 auto;background:#101816;border-radius:12px;overflow:hidden}
+#scannerVideo{display:block;width:100%;height:auto;max-height:260px;min-height:180px;object-fit:contain;background:#101816}
+.scanner-guide{position:absolute;left:5%;right:5%;top:34%;height:32%;border:2px solid #ff5555;border-radius:8px;box-shadow:0 0 0 999px #00000020;pointer-events:none}
+.scanner-guide:after{content:"";position:absolute;left:0;right:0;height:2px;top:0;background:#ff5555;box-shadow:0 0 8px #ff5555;animation:scanline 2s linear infinite}
+@keyframes scanline{0%{top:0}100%{top:calc(100% - 2px)}}
+.scanner-hint{font-size:12px;color:#d6e7e0;text-align:center;padding:7px 8px;background:#101816}
+@media(max-width:480px){.grid{grid-template-columns:1fr}main{padding:10px}.card{padding:14px}}
+</style>
+</head>
+<body>
+<header><h1>Control de Garita</h1><p>Registro de ingresos y egresos · Limpieza · Visitas · Inmobiliarias</p></header>
+<main>
+<section id="setup" class="card hidden">
+<h2>Crear contraseña de vigilancia</h2>
+<p class="muted">Todos los vigiladores utilizarán esta misma contraseña. Creá una clave de al menos 6 caracteres y guardala en un lugar seguro.</p>
+<label>Nueva contraseña</label><input id="newpass" type="password" autocomplete="new-password">
+<label>Repetir contraseña</label><input id="repeatpass" type="password" autocomplete="new-password">
+<div class="actions"><button id="savepass">Crear contraseña</button></div><div id="setuperr" class="error"></div>
+</section>
+<section id="login" class="card hidden">
+<h2>Acceso de vigilancia</h2><label>Contraseña</label><input id="pass" type="password" autocomplete="current-password">
+<div class="actions"><button id="loginbtn">Ingresar</button></div><div id="loginerr" class="error"></div>
+</section>
+<div id="app" class="hidden">
+<div class="card">
+<div class="grid">
+<div><div class="muted">Personas actualmente dentro</div><div class="stat" id="insideCount">0</div></div>
+<div><div class="muted">Ingresos registrados hoy</div><div class="stat" id="todayCount">0</div></div>
+</div>
+</div>
+<div class="tabs">
+<button class="active" data-tab="new">Nuevo ingreso</button>
+<button class="secondary" data-tab="inside">Personas dentro</button>
+<button class="secondary" data-tab="history">Historial</button>
+<button class="secondary" data-tab="settings">Configuración</button>
+</div>
+<section id="tab-new" class="card">
+<h2>Registrar ingreso</h2>
+<p class="muted">Podés escanear el DNI con la cámara, pegar los datos PDF417 o completar manualmente.</p>
+<div class="actions"><button type="button" id="scanBtn">Escanear DNI con cámara</button></div>
+<div id="scannerBox" class="hidden" style="margin-top:12px">
+  <div class="scanner-frame">
+    <video id="scannerVideo" playsinline muted></video>
+    <div class="scanner-guide" aria-hidden="true"></div>
+    <div class="scanner-hint">Alineá el código PDF417 completo. Probá acercar o alejar el DNI lentamente.</div>
+  </div>
+  <p id="scannerStatus" class="muted" aria-live="polite">Preparando cámara…</p>
+  <div class="actions"><button type="button" class="secondary" id="stopScan">Cerrar cámara</button></div>
+</div>
+<label>Datos copiados desde PDF417 (alternativa)</label><textarea id="raw" placeholder="Pegá aquí el contenido copiado desde la aplicación PDF417"></textarea>
+<div class="actions"><button class="secondary" id="parse">Leer datos pegados</button></div>
+<div class="grid">
+<div><label>Apellido</label><input id="surname" autocomplete="off"></div>
+<div><label>Nombre</label><input id="given" autocomplete="off"></div>
+</div>
+<label>DNI</label><input id="dni" inputmode="numeric" autocomplete="off">
+<label>Categoría</label>
+<select id="category"><option value="visit">Visitas</option><option value="clean">Limpieza</option><option value="real">Inmobiliarias</option></select>
+<label>Casa / lote / departamento que visita</label><input id="destination" list="destinationOptions" placeholder="Ej.: Casa 12 / Depto. B-3"><datalist id="destinationOptions"></datalist>
+<p id="personStatus" class="muted" aria-live="polite">Si la persona ya fue registrada, sus datos se completarán al reconocer el DNI.</p>
+<div class="notice" style="margin-top:12px">La hora de ingreso se registra automáticamente al confirmar. Verificá que los datos leídos coincidan con el documento. El lector ZXing de esta prueba se carga desde internet; la cámara y el lector no funcionarán si no puede descargarse esa biblioteca.</div>
+<div class="actions"><button id="add">Registrar ingreso</button><button class="secondary" id="clear">Limpiar</button></div><div id="formerr" class="error"></div>
+</section>
+<section id="tab-inside" class="card hidden"><h2>Personas dentro</h2><p class="muted">Personas con ingreso registrado y sin egreso.</p><div id="insideList"></div></section>
+<section id="tab-history" class="card hidden"><h2>Historial</h2>
+<label>Filtrar por categoría</label><select id="filter"><option value="all">Todas</option><option value="clean">Limpieza</option><option value="visit">Visitas</option><option value="real">Inmobiliarias</option></select>
+<label>Buscar por apellido o DNI</label><input id="search" placeholder="Escribí para buscar">
+<div class="actions"><button id="export">Exportar CSV para Excel</button></div><div id="historyList"></div></section>
+<section id="tab-settings" class="card hidden"><h2>Configuración</h2>
+<p class="muted">Los registros de esta versión se guardan en este teléfono y navegador. No se sincronizan automáticamente con otros dispositivos.</p>
+<div class="notice">Importante: esta es una primera versión de prueba. La contraseña limita el acceso desde la pantalla, pero los datos guardados en el teléfono todavía no están cifrados. No la uses aún como sistema definitivo para almacenar DNI reales. Antes de ponerla en funcionamiento habitual hay que reforzar la protección y definir copias de seguridad y conservación de datos.</div>
+<label>Cambiar contraseña</label><input id="oldpass" type="password" placeholder="Contraseña actual">
+<input id="change1" type="password" placeholder="Nueva contraseña (mínimo 6 caracteres)" style="margin-top:8px">
+<input id="change2" type="password" placeholder="Repetir nueva contraseña" style="margin-top:8px">
+<div class="actions"><button id="changepass">Actualizar contraseña</button><button class="secondary" id="lock">Cerrar sesión</button></div><div id="settingerr" class="error"></div>
+</section>
+</div>
+</main>
+<script src="https://unpkg.com/@zxing/browser@0.2.1/umd/zxing-browser.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const KEYS={pass:'garita_pass_hash_v1',records:'garita_records_v1',people:'garita_people_v1'};
+let records=[];
+let people=[];
+let cameraStream=null, scanTimer=null, detector=null, detecting=false, zxingReader=null, scanAttempts=0;
+const now=()=>new Date().toISOString();
+const fmt=s=>new Date(s).toLocaleString('es-AR',{dateStyle:'short',timeStyle:'short'});
+const today=()=>new Date().toLocaleDateString('en-CA');
+const catName=c=>({clean:'Limpieza',visit:'Visitas',real:'Inmobiliarias'}[c]||c);
+const escapeHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function hash(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}
+function load(){
+  try{records=JSON.parse(localStorage.getItem(KEYS.records)||'[]')}catch{records=[]}
+  try{people=JSON.parse(localStorage.getItem(KEYS.people)||'[]')}catch{people=[]}
+  // Migración sencilla: crear el registro de personas a partir del historial existente.
+  if(!people.length && records.length){
+    const byDni=new Map();
+    [...records].reverse().forEach(r=>{if(!r.dni)return;const old=byDni.get(r.dni)||{dni:r.dni,surname:r.surname,given:r.given,category:r.category,destinations:[]};old.surname=r.surname||old.surname;old.given=r.given||old.given;old.category=r.category||old.category;if(r.destination&&!old.destinations.includes(r.destination))old.destinations.push(r.destination);byDni.set(r.dni,old)});
+    people=[...byDni.values()];localStorage.setItem(KEYS.people,JSON.stringify(people));
+  }
+}
+function save(){localStorage.setItem(KEYS.records,JSON.stringify(records));localStorage.setItem(KEYS.people,JSON.stringify(people));render()}
+function findPerson(dni){return people.find(p=>p.dni===dni)}
+function rememberPerson(surname,given,dni,category,destination){
+  let p=findPerson(dni);
+  if(!p){p={dni,surname,given,category,destinations:[]};people.push(p)}
+  p.surname=surname;p.given=given;p.category=category;
+  if(destination&&!p.destinations.includes(destination))p.destinations.push(destination);
+  localStorage.setItem(KEYS.people,JSON.stringify(people));
+}
+function recognizePerson(){
+  const dni=$('dni').value.replace(/\D/g,'');if(!dni)return;
+  const p=findPerson(dni);
+  if(!p){$('personStatus').textContent='Persona no registrada anteriormente. Revisá los datos y completá el destino.';$('destinationOptions').innerHTML='';return}
+  $('surname').value=p.surname||$('surname').value;$('given').value=p.given||$('given').value;
+  if(p.category)$('category').value=p.category;
+  const ds=Array.isArray(p.destinations)?p.destinations:[];
+  $('destinationOptions').innerHTML=ds.map(d=>`<option value="${escapeHtml(d)}"></option>`).join('');
+  if(ds.length===1&&!$('destination').value)$('destination').value=ds[0];
+  $('personStatus').textContent=`Persona reconocida: ${p.category==='clean'?'Personal de limpieza':catName(p.category)}. Elegí o confirmá el domicilio${ds.length>1?' (tiene varios registrados)':''}.`;
+}
+
+function show(id){['setup','login','app'].forEach(x=>$(x).classList.toggle('hidden',x!==id))}
+async function init(){if(!window.crypto?.subtle){$('setup').innerHTML='<h2>Navegador no compatible</h2><p>Para crear una contraseña segura, abrí este archivo desde un navegador compatible en una conexión segura.</p>';show('setup');return}
+load();if(!localStorage.getItem(KEYS.pass))show('setup');else show('login')}
+$('savepass').onclick=async()=>{let a=$('newpass').value,b=$('repeatpass').value;if(a.length<6||a!==b){$('setuperr').textContent='Las contraseñas deben coincidir y tener al menos 6 caracteres.';return}localStorage.setItem(KEYS.pass,await hash(a));$('newpass').value=$('repeatpass').value='';show('app');render()};
+$('loginbtn').onclick=async()=>{if(await hash($('pass').value)===localStorage.getItem(KEYS.pass)){ $('pass').value='';$('loginerr').textContent='';load();show('app');render()}else $('loginerr').textContent='Contraseña incorrecta.'};
+function parseRaw(){const raw=$('raw').value.trim();if(!raw){$('formerr').textContent='Primero pegá los datos copiados desde PDF417.';return}
+const p=raw.split('@').map(x=>x.trim());
+if(p.length>=7){$('surname').value=p[1]||'';$('given').value=p[2]||'';$('dni').value=(p[4]||'').replace(/\D/g,'');recognizePerson();$('formerr').textContent='Datos identificados. Revisalos antes de registrar.'}
+else {$('formerr').textContent='No se reconoció el formato esperado. Completá apellido, nombre y DNI manualmente.'}}
+$('parse').onclick=parseRaw;
+$('add').onclick=()=>{let surname=$('surname').value.trim(),given=$('given').value.trim(),dni=$('dni').value.replace(/\D/g,''),destination=$('destination').value.trim(),category=$('category').value;
+if(!surname||!given||!dni||!destination){$('formerr').textContent='Completá apellido, nombre, DNI y destino.';return}
+if(records.some(r=>r.dni===dni&&!r.exit)){if(!confirm('Este DNI ya figura dentro del complejo. ¿Querés registrar otro ingreso igualmente?'))return}
+records.unshift({id:Date.now().toString(36)+Math.random().toString(36).slice(2,7),surname,given,dni,destination,category,entry:now(),exit:null});
+rememberPerson(surname,given,dni,category,destination);save();clearForm();$('formerr').textContent='Ingreso registrado correctamente.';switchTab('inside')};
+function clearForm(){['raw','surname','given','dni','destination'].forEach(id=>$(id).value='');$('category').value='visit';$('personStatus').textContent='Si la persona ya fue registrada, sus datos se completarán al reconocer el DNI.';$('destinationOptions').innerHTML='';$('formerr').textContent=''}
+$('clear').onclick=clearForm;
+function exitPerson(id){let r=records.find(x=>x.id===id);if(r&&!r.exit){r.exit=now();save()}}
+function card(r,inside=false){return `<div class="record"><div style="display:flex;justify-content:space-between;gap:8px;align-items:start"><div><strong>${escapeHtml(r.surname)}, ${escapeHtml(r.given)}</strong><div class="meta">DNI: ${escapeHtml(r.dni)} · Destino: ${escapeHtml(r.destination)}</div><div class="meta">Ingreso: ${fmt(r.entry)}${r.exit?' · Egreso: '+fmt(r.exit):''}</div></div><span class="pill ${r.category}">${catName(r.category)}</span></div>${inside?`<div class="actions"><button class="small" onclick="exitPerson('${r.id}')">Registrar egreso</button></div>`:''}</div>`}
+function render(){let ins=records.filter(r=>!r.exit);$('insideCount').textContent=ins.length;$('todayCount').textContent=records.filter(r=>new Date(r.entry).toLocaleDateString('en-CA')===today()).length;
+$('insideList').innerHTML=ins.length?ins.map(r=>card(r,true)).join(''):'<p class="muted">No hay personas registradas dentro.</p>';
+let f=$('filter').value,q=$('search').value.trim().toLowerCase();let list=records.filter(r=>(f==='all'||r.category===f)&&(!q||(r.surname+' '+r.given+' '+r.dni).toLowerCase().includes(q)));
+$('historyList').innerHTML=list.length?list.map(r=>card(r,false)).join(''):'<p class="muted">No hay movimientos que coincidan.</p>'}
+function switchTab(tab){document.querySelectorAll('[data-tab]').forEach(b=>{b.classList.toggle('active',b.dataset.tab===tab);b.classList.toggle('secondary',b.dataset.tab!==tab)});['new','inside','history','settings'].forEach(t=>$('tab-'+t).classList.toggle('hidden',t!==tab));render()}
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));
+$('filter').onchange=render;$('search').oninput=render;
+$('export').onclick=()=>{let rows=[['Apellido','Nombre','DNI','Categoria','Destino','Ingreso','Egreso'],...records.map(r=>[r.surname,r.given,r.dni,catName(r.category),r.destination,fmt(r.entry),r.exit?fmt(r.exit):''])];let csv=rows.map(row=>row.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(';')).join('\r\n');let blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});let a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='registro_garita_'+today()+'.csv';a.click();URL.revokeObjectURL(a.href)};
+$('changepass').onclick=async()=>{let current=await hash($('oldpass').value),a=$('change1').value,b=$('change2').value;if(current!==localStorage.getItem(KEYS.pass)){$('settingerr').textContent='La contraseña actual no es correcta.';return}if(a.length<6||a!==b){$('settingerr').textContent='La nueva contraseña debe coincidir y tener al menos 6 caracteres.';return}localStorage.setItem(KEYS.pass,await hash(a));['oldpass','change1','change2'].forEach(id=>$(id).value='');$('settingerr').textContent='Contraseña actualizada.'};
+$('lock').onclick=()=>{stopScanner();show('login')};
+window.addEventListener('pagehide',stopScanner);
+
+async function startScanner(){
+  const status=$('scannerStatus');
+  $('scannerBox').classList.remove('hidden');
+  scanAttempts=0;
+  if(!navigator.mediaDevices?.getUserMedia){status.textContent='Este navegador no habilita la cámara. Podés seguir pegando los datos PDF417.';return}
+  if(!window.ZXingBrowser || !ZXingBrowser.BrowserPDF417Reader){status.textContent='No se pudo cargar el lector ZXing PDF417. Revisá la conexión a internet y recargá la página. También podés pegar los datos PDF417.';return}
+  try{
+    cameraStream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}});
+    const video=$('scannerVideo');
+    video.srcObject=cameraStream;
+    await video.play();
+    zxingReader=new ZXingBrowser.BrowserPDF417Reader();
+    detecting=true;
+    status.textContent='Cámara activa. ZXing PDF417 está intentando leer el código. Mantené el DNI quieto y el código completo visible.';
+    scanFrameZXing();
+  }catch(err){
+    stopScanner();
+    status.textContent=err.name==='NotAllowedError'?'No se concedió permiso para usar la cámara. Habilitá el permiso de cámara para Chrome.':`No se pudo iniciar el escáner (${err.name||'error'}). Podés pegar los datos PDF417.`;
+  }
+}
+{
+async function scanFrameZXing(){
+  if(!detecting||!zxingReader)return;
+  const video=$('scannerVideo');
+
+  if(video.readyState>=2 && video.videoWidth>0){
+    scanAttempts++;
+    try{
+      const result=await zxingReader.decodeOnceFromVideoElement(video);
+      if(result){
+        const value=result.getText();
+        if(value){
+          $('raw').value=value;
+          stopScanner();
+          parseRaw();
+          return;
+        }
+      }
+    }catch(err){
+      const name=err?.name||'';
+      if(name && !/NotFound|Checksum|Format/.test(name)){
+        $('scannerStatus').textContent=
+          `ZXing activo. Intentos: ${scanAttempts}. Aviso: ${name}.`;
+      }
+    }
+  }
+
+  if(detecting){
+    scanTimer=setTimeout(scanFrameZXing,450);
+  }
+}        const value=typeof result.getText==='function'?result.getText():String(result.text||'');
+        if(value){$('raw').value=value;stopScanner();parseRaw();return;}
+      }
+    }catch(err){
+      // NotFoundException es normal mientras todavía no aparece un código legible.
+      const name=err?.name||'';
+      if(name && !/NotFound|Checksum|Format/.test(name)){
+        $('scannerStatus').textContent=`ZXing sigue activo. Intentos: ${scanAttempts}. Último aviso: ${name}.`;
+      }
+    }
+  }
+  if(detecting){
+    $('scannerStatus').textContent=`Cámara activa · lector ZXing PDF417 · ${video.videoWidth} × ${video.videoHeight} · ${scanAttempts} intentos. Si no lo toma, acercá o alejá el DNI hasta que el código se vea nítido.`;
+    scanTimer=setTimeout(scanFrameZXing,450);
+  }
+}
+function stopScanner(){
+  detecting=false;
+  if(scanTimer)clearTimeout(scanTimer);
+  scanTimer=null;
+  if(cameraStream){cameraStream.getTracks().forEach(t=>t.stop());cameraStream=null;}
+  const v=$('scannerVideo');if(v)v.srcObject=null;
+  zxingReader=null;
+}
+$('scanBtn').onclick=startScanner;
+$('stopScan').onclick=()=>{stopScanner();$('scannerBox').classList.add('hidden')};
+$('dni').addEventListener('change',recognizePerson);
+$('dni').addEventListener('blur',recognizePerson);
+init();
+</script>
+</body>
+</html>
